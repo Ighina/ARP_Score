@@ -1,0 +1,7 @@
+pandas
+pathlib2
+scikit-learn
+segeval
+sentence-transformers
+torch
+transformers
