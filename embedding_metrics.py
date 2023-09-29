@@ -149,9 +149,8 @@ def SegReFree(segments, verbose=False, max_choice = True,
   return np.nanmean(all_scores)*sign
 
 def silhouette_score_block(X, labels,  one_segment_docs, N, metric='euclidean', sample_size=None,
-                           random_state=None, n_jobs=1, **kwds):
+                           random_state=None, n_jobs=1, correction_factor=False, **kwds):
     """Compute the mean Silhouette Coefficient of all samples.
-    Implementation from https://gist.github.com/AlexandreAbraham/5544803
     The Silhouette Coefficient is calculated using the mean intra-cluster
     distance (a) and the mean nearest-cluster distance (b) for each sample.
     The Silhouette Coefficient for a sample is ``(b - a) / max(a, b)``.
@@ -168,11 +167,6 @@ def silhouette_score_block(X, labels,  one_segment_docs, N, metric='euclidean', 
         Feature array.
     labels : array, shape = [n_samples]
              label values for each sample
-    one_segment_docs : int
-        The number of documents for which no segmentation exists (have only
-        one segment).
-    N : int
-        The total number of data points to be used as denominator.
     metric : string, or callable
         The metric to use when calculating distance between instances in a
         feature array. If metric is a string, it must be one of the options
@@ -200,11 +194,16 @@ def silhouette_score_block(X, labels,  one_segment_docs, N, metric='euclidean', 
         and Applied Mathematics 20: 53-65. doi:10.1016/0377-0427(87)90125-7.
     http://en.wikipedia.org/wiki/Silhouette_(clustering)
     """
+    #return silhouette_samples_block(
+    #    X, labels, metric=metric, n_jobs=n_jobs, **kwds)
+    #return np.mean(silhouette_samples_block(
+    #    X, labels, metric=metric, n_jobs=n_jobs, **kwds))
+
     return (np.sum(silhouette_samples_block(
-        X, labels, metric=metric, n_jobs=n_jobs, **kwds))-one_segment_docs)/(N+one_segment_docs)
+        X, labels, metric=metric, n_jobs=n_jobs,correction_factor=correction_factor, **kwds))-one_segment_docs)/(N+one_segment_docs)
 
 
-def silhouette_samples_block(X, labels, metric='euclidean', n_jobs=1, **kwds):
+def silhouette_samples_block(X, labels, metric='euclidean', n_jobs=1,correction_factor=True, **kwds):
     """Compute the Silhouette Coefficient for each sample.
     The Silhoeutte Coefficient is a measure of how well samples are clustered
     with samples that are similar to themselves. Clustering models with a high
@@ -253,7 +252,12 @@ def silhouette_samples_block(X, labels, metric='euclidean', n_jobs=1, **kwds):
     B = _nearest_cluster_distance_block(X, labels, flattened_labels, metric, n_jobs=n_jobs,
                                         **kwds)
 
-    sil_samples = (B - A) / np.maximum(A, B)
+    #return B[0], B[1]
+    if correction_factor:
+      cf = np.array([1-(1/len(np.where(flattened_labels == label)[0])) for label in flattened_labels])
+    else:
+      cf = 1
+    sil_samples = (B - A) / np.maximum(A, B)*cf
     # nan values are for clusters of size 1, and should be 0
     return np.nan_to_num(sil_samples)
 
@@ -350,6 +354,8 @@ def _nearest_cluster_distance_block(X, labels, flattened_labels, metric, n_jobs=
     labels_a = np.array(labels_a)
     labels_b = np.array(labels_b)
 
+    #return labels_a, labels_b
+
     values = Parallel(n_jobs=n_jobs)(
             delayed(_nearest_cluster_distance_block_)(
                 X[np.where(flattened_labels == label_a)[0]],
@@ -362,24 +368,16 @@ def _nearest_cluster_distance_block(X, labels, flattened_labels, metric, n_jobs=
 
             indices_a = np.where(flattened_labels == label_a)[0]
 
+            #print(values_a)
+            #print(indices_a)
             inter_dist[indices_a] = np.minimum(values_a, inter_dist[indices_a])
             del indices_a
+            # indices_b = np.where(labels == label_b)[0]
+            # inter_dist[indices_b] = np.minimum(values_b, inter_dist[indices_b])
+            # del indices_b
     return inter_dist
 
 def silhouette_segrefree(embeddings, labels, njobs=1, as_loss=True):
-  """
-  Use Silhouette Score as an embedding-based, reference-free metric
-  for topic segmentation evaluation.
-
-  Input:
-    embeddings <- List of np.array: a list including a matrix for each document where all the embeddings for the document's sentences are stored.
-    labels <- List of lists of integers: a list including a list of binary integers for each document, where 0 represents no topic boundary at the same index sentence and 1 indicates there is a topic boundary at that index (new topic from next sentence).
-    njobs <- int: the number of jobs to parallelize the computation.
-    as_loss <- bool: If True, transform the final output to lay in the 0-1 range, where 0 is the best score and 1 is the worst (i.e. transform in loss function).
-  Output:
-    SC <- float: the Silhouette Score for the given corpus.
-  
-  """
   label_counter = 0
   new_labels = []
   new_embeddings = []
@@ -512,19 +510,19 @@ class RefreeMetric:
           except:
             self.encoder = BERT_BASE_ENCODER(encoder)
 
-    def encode_corpus(self, corpus):
-        """
-        Arguments:
-          corpus--> List of lists: a python list including lists of sentences (or any unit of text) where each list of sentences correspond to a separate document. 
-        Output:
-          test_embeddings--> List of numpy arrays: a python list including a 2D numpy array for each document in the corpus (where the first dimension correspond to the sentence in the document and the second is the embedding dimension). 
-        """
+  def encode_corpus(self, corpus):
+      """
+      Arguments:
+        corpus--> List of lists: a python list including lists of sentences (or any unit of text) where each list of sentences correspond to a separate document. 
+      Output:
+        test_embeddings--> List of numpy arrays: a python list including a 2D numpy array for each document in the corpus (where the first dimension correspond to the sentence in the document and the second is the embedding dimension). 
+      """
 
-        test_embeddings = []
-        for doc in corpus:
-          test_embeddings.append(self.encoder.encode(doc))
-        
-        return test_embeddings
+      test_embeddings = []
+      for doc in corpus:
+        test_embeddings.append(self.encoder.encode(doc))
+      
+      return test_embeddings
 
   def prepare_segments(self, corpus, segmentation, embeddings=None):
         """
@@ -558,7 +556,7 @@ class ARPMetric(RefreeMetric):
           score_function--> str: one of ["pairwise_cosine", "standard_deviation", "average_cosine"], as described in the original paper. "pairwise_cosine" is the one that usually perform best and the default choice.
           encoder--> str: the name of an available model from sentence-transformers or from huggingface. The name should be the same as found on huggingface_hub or the init function wil throw an error. If you want to pass embeddings directly to ARP (without computing them previously), the encoder argument can be set to None.
         """
-        super()__init__(encoder=encoder)
+        super().__init__(encoder=encoder)
         if score_function not in ("pairwise_cosine", "standard_deviation", "average_cosine"):
             raise ValueError('The value of score function should be one of "pairwise_cosine", "standard_deviation" or "average_cosine"!')
         
@@ -606,7 +604,7 @@ class SegReFreeMetric(RefreeMetric):
           default_cap --> int|"auto": a positive integer or the string "auto" determining a default value to assign to the document-level score in the cases of metrics' failure (i.e. no topic boundary or each segment has length 1). If "auto" is used, then it automatically assign to these cases the highest score among the ones in the corpus (use just if having more than one document).
           no_backoff --> bool: If True, the metric will assign R=0 to each segment of length 1, as in the original paper. This is not recommended as it yields results that are stongly skewed towards favoring segments of length 1.
         """
-        super()__init__(encoder=encoder)
+        super().__init__(encoder=encoder)
 
     def evaluate_segmentation(self, corpus, segmentation, 
                               embeddings=None, return_all_scores_and_means=False,
@@ -624,7 +622,7 @@ class SegReFreeMetric(RefreeMetric):
 
         segmented_embeddings = self.prepare_segments(corpus, segmentation, embeddings)
 
-        score = SegReFree(segmented_embeddings, return_relative_proximities=output_all_scores, verbose=verbose)
+        score = SegReFree(segmented_embeddings, return_all_scores_and_means=return_all_scores_and_means, verbose=verbose)
 
         if return_all_scores_and_means:
             return score, scores_and_means
@@ -637,7 +635,7 @@ class SilhouetteMetric(RefreeMetric):
           encoder--> str: the name of an available model from sentence-transformers or from huggingface. The name should be the same as found on huggingface_hub or the init function wil throw an error. If you want to pass embeddings directly to ARP (without computing them previously), the encoder argument can be set to None.
           njobs--> int: the number of separate jobs to perform the silhouette calculation (using multiprocessing package).
         """
-        super()__init__(encoder=encoder)
+        super().__init__(encoder=encoder)
         self.n_job=njobs
 
     def evaluate_segmentation(self, corpus, segmentation, 
@@ -651,9 +649,10 @@ class SilhouetteMetric(RefreeMetric):
            score--> float: the Silhouette score for the corpus.
         """
 
-        segmented_embeddings = self.prepare_segments(corpus, segmentation, embeddings)
+        if embeddings is None:
+          embeddings = self.encode_corpus(corpus)
 
-        score = silhouette_segrefree(segmented_embeddings, segmentation, njobs=selgf.n_job)
+        score = silhouette_segrefree(embeddings, segmentation, njobs=self.n_job)
 
         return score
 
