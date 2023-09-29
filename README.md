@@ -26,8 +26,8 @@ To run the experiments presented in the original paper, first you need to downlo
 
 - QMSum Dataset:  https://github.com/Yale-LILY/QMSum
 
-For convenience, the datasets are already downloaded and stored in the data folder.
-The experiments are executed by the main.py function as following:
+Specifically, download all the json files from the Wikisection dataset into data/wikisection and clone the original QMSum repository into the data folder, as well.
+Ince done that, the experiments are executed by the main.py function as following:
 
 ```
 main.py -d dataset_name -e model_name
