@@ -54,7 +54,7 @@ You can use the embedding-based scores for reference-free evaluation on your own
 To use ARP method, for example, you can use our ARP class by first instantiating:
 
 ```
-from embedding_metrics import ARP_metric
+from embedding_metrics import ARPMetric
 
 metric = ARPMetric(score_function, encoder)
 ```
@@ -81,7 +81,7 @@ In the above minimal example, the corpus is a list of 2 documents each including
 
 Having our corpus and hypothesised segmentation, then, we can obtain the ARP score for the corpus by running the following:
 ```
-from embedding_metrics import ARP_metric
+from embedding_metrics import ARPMetric
 
 metric = ARPMetric() # using default settings
 
