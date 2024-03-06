@@ -126,15 +126,9 @@ class BERT_BASE_ENCODER:
                                              
                     
                     except RuntimeError:
-                        #failed = "AAAAAAAAAH"
-                        #print(len(all_embeddings))
                         # This is an exception encountered when using Falcon with QMSum, as it appears there are features of some sentences in that dataset which caused an unknown error in that model
                         all_embeddings.extend(torch.zeros((batch_size, model_output.shape[1])))
                         continue
-                        #print(len(all_embeddings))
-                        #length_sorted_idx = np.delete(length_sorted_idx, start_index-deleted)
-                        #deleted+=1
-                        #continue
                         
                 model_output = self.pool(model_output,
                                          encoded_input['attention_mask'].to(self.device)).detach().cpu()
