@@ -36,7 +36,8 @@ def SegReFreeScore(segments, correction_factor=True, negative=False, bounded=Fal
 
 def SegReFree(segments, verbose=False, max_choice = True,
               correction_factor=True, negative=False,
-              bounded=False, return_all_scores_and_means=False,
+              bounded=False, return_all_scores=False,
+              return_all_scores_and_means=False,
               default_cap=10, no_backoff=False):
   """
     Code to calculate the SegReFree score as described in https://openreview.net/forum?id=NVM6eCm69eu.
@@ -144,12 +145,15 @@ def SegReFree(segments, verbose=False, max_choice = True,
     all_scores = all_scores + [float(default_cap_max) for _ in range(single_scores)]
   if all_one_scores:
     all_scores = all_scores + [float(default_cap_mean) for _ in range(all_one_scores)]
-  if return_all_scores_and_means:
+  if return_all_scores:
+    return np.nanmean(all_scores)*sign, all_scores
+  elif return_all_scores_and_means:
     return np.nanmean(all_scores)*sign, all_scores_and_means
   return np.nanmean(all_scores)*sign
 
 def silhouette_score_block(X, labels,  one_segment_docs, N, metric='euclidean', sample_size=None,
-                           random_state=None, n_jobs=1, correction_factor=False, **kwds):
+                           random_state=None, n_jobs=1, correction_factor=False, 
+                           return_scores=False, **kwds):
     """Compute the mean Silhouette Coefficient of all samples.
     The Silhouette Coefficient is calculated using the mean intra-cluster
     distance (a) and the mean nearest-cluster distance (b) for each sample.
@@ -198,9 +202,20 @@ def silhouette_score_block(X, labels,  one_segment_docs, N, metric='euclidean', 
     #    X, labels, metric=metric, n_jobs=n_jobs, **kwds)
     #return np.mean(silhouette_samples_block(
     #    X, labels, metric=metric, n_jobs=n_jobs, **kwds))
+    
+    scores = silhouette_samples_block(X, 
+                                      labels, 
+                                      metric=metric, 
+                                      n_jobs=n_jobs,
+                                      correction_factor=correction_factor, 
+                                      **kwds)
+    
+    if return_scores:
+        mean = (np.sum(scores)-one_segment_docs)/(N+one_segment_docs)
+        scores = np.append(scores, 0-np.ones(one_segment_docs))
+        return mean, scores
 
-    return (np.sum(silhouette_samples_block(
-        X, labels, metric=metric, n_jobs=n_jobs,correction_factor=correction_factor, **kwds))-one_segment_docs)/(N+one_segment_docs)
+    return (np.sum(scores)-one_segment_docs)/(N+one_segment_docs)
 
 
 def silhouette_samples_block(X, labels, metric='euclidean', n_jobs=1,correction_factor=True, **kwds):
@@ -377,7 +392,7 @@ def _nearest_cluster_distance_block(X, labels, flattened_labels, metric, n_jobs=
             # del indices_b
     return inter_dist
 
-def silhouette_segrefree(embeddings, labels, njobs=1, as_loss=True):
+def silhouette_segrefree(embeddings, labels, njobs=1, as_loss=True, return_scores=False):
   label_counter = 0
   new_labels = []
   new_embeddings = []
@@ -395,9 +410,16 @@ def silhouette_segrefree(embeddings, labels, njobs=1, as_loss=True):
       if lab:
         label_counter+=1
     new_labels.append(new_labs)
-
-  SC = silhouette_score_block(embeddings, new_labels,  one_segment_docs,N, metric='euclidean', sample_size=None,
-                          random_state=None, n_jobs=njobs)
+  
+  if return_scores:
+      SC, scores = silhouette_score_block(embeddings, new_labels,  one_segment_docs,N, metric='euclidean', sample_size=None,
+                                  random_state=None, n_jobs=njobs, return_scores = True)
+      if as_loss:
+          SC = 1-(SC+1)/2
+      return SC, scores
+  else:
+      SC = silhouette_score_block(embeddings, new_labels,  one_segment_docs,N, metric='euclidean', sample_size=None,
+                                  random_state=None, n_jobs=njobs)
 
   if as_loss:
     SC = 1-(SC+1)/2
@@ -434,13 +456,14 @@ def ARP(segments,
           list of floats: all the RP scores for each segment before averaging.
     """
     scores = []
+    doc_scores = []
     length_one_segments = [] # at the end of each document, we compute the score for the special case of single-sentence segments stored in this list (see problem 1a)
     average_intra = [] # at the end of each document, we compute the average intra-cluster variance to address problem 1a
     for doc_index, doc in enumerate(segments):
         if len(doc)<2:
           if verbose:
             print(f"Warning: document no segmentation found for document number {doc_index}: score for the document defaulting to -1")
-          scores.append(-1)
+          doc_scores.append(-1)
           continue
         for index, seg in enumerate(doc):
             try:
@@ -480,12 +503,15 @@ def ARP(segments,
           average_intra = np.nanmean(length_one_segments)
         for inter in length_one_segments:
           scores.append((inter**n-average_intra**n)/(inter**n+average_intra**n))
-
+        
+        doc_scores.append(np.nanmean(scores))
+        
         average_intra = []
         length_one_segments = []
+        scores = []
 
     if return_relative_proximities:
-      return scores
+      return doc_scores
 
     # If returning ARP scores as a loss function, we first translate it in the range 0-1 and then we subtract it from 1
     if as_loss:
@@ -493,7 +519,7 @@ def ARP(segments,
 
     # problem 3: independence. The independence assumption should be made, nonetheless. Think of an exponentially increasing embedding: that would tend towards 1 no matter what information it encodes.
     # shuffling the segments might limit this effect, but at the end that would mean that order doesn't matter anyway so an independence assumprion needs to be stated.
-    return np.nanmean(scores)
+    return np.nanmean(doc_scores)
 
 class RefreeMetric:
   def __init__(self, encoder = "all-mpnet-base-v2"):
@@ -607,7 +633,7 @@ class SegReFreeMetric(RefreeMetric):
         super().__init__(encoder=encoder)
 
     def evaluate_segmentation(self, corpus, segmentation, 
-                              embeddings=None, return_all_scores_and_means=False,
+                              embeddings=None, output_all_scores=False,
                               verbose = False):
         """
         Arguments:
@@ -622,10 +648,10 @@ class SegReFreeMetric(RefreeMetric):
 
         segmented_embeddings = self.prepare_segments(corpus, segmentation, embeddings)
 
-        score = SegReFree(segmented_embeddings, return_all_scores_and_means=return_all_scores_and_means, verbose=verbose)
-
-        if return_all_scores_and_means:
+        if output_all_scores:
+            score, scores_and_means = SegReFree(segmented_embeddings, return_all_scores=True, verbose=verbose)
             return score, scores_and_means
+        score = SegReFree(segmented_embeddings, verbose=verbose)
         return score
 
 class SilhouetteMetric(RefreeMetric):
@@ -639,7 +665,7 @@ class SilhouetteMetric(RefreeMetric):
         self.n_job=njobs
 
     def evaluate_segmentation(self, corpus, segmentation, 
-                              embeddings=None):
+                              embeddings=None, output_all_scores=False):
         """
         Arguments:
           corpus--> List of lists: a python list including lists of sentences (or any unit of text) where each list of sentences correspond to a separate document. 
@@ -652,7 +678,7 @@ class SilhouetteMetric(RefreeMetric):
         if embeddings is None:
           embeddings = self.encode_corpus(corpus)
 
-        score = silhouette_segrefree(embeddings, segmentation, njobs=self.n_job)
+        score = silhouette_segrefree(embeddings, segmentation, njobs=self.n_job, return_scores = output_all_scores)
 
         return score
 
